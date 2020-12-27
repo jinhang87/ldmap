@@ -6,7 +6,7 @@ from Logger import logger
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine
-from sqlalchemy import Column, Integer, String, Text, DateTime, DECIMAL, Table, MetaData, UniqueConstraint, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, DECIMAL, Float, Table, MetaData, UniqueConstraint, ForeignKey
 from sqlalchemy.dialects.mysql import LONGTEXT
 from datetime import datetime, date, timedelta
 from sqlalchemy.orm import sessionmaker, mapper
@@ -53,6 +53,8 @@ t_bid = Table('higherschool', metadata,
               Column('layer_id', Text()),
               Column('layer_name', Text()),
               Column('map_id', Text()),
+              Column('longitude', Text()),
+              Column('latitude', Text()),
               Column('tag_create_time', DateTime()),
               Column('tag_edit_time', DateTime()),
               Column('createtime', DateTime()),
@@ -61,7 +63,8 @@ t_bid = Table('higherschool', metadata,
 
 
 class Bid(object):
-    def __init__(self, feature_id, feature_name, group_id, group_name, layer_id, layer_name, map_id, tag_create_time, tag_edit_time):
+    def __init__(self, feature_id, feature_name, group_id, group_name, layer_id, layer_name, map_id, tag_create_time, tag_edit_time,
+                 longitude, latitude):
         self.feature_id = feature_id
         self.feature_name = feature_name
         self.group_id = group_id
@@ -69,6 +72,8 @@ class Bid(object):
         self.layer_id = layer_id
         self.layer_name = layer_name
         self.map_id = map_id
+        self.longitude = longitude
+        self.latitude = latitude
         self.tag_create_time = tag_create_time
         self.tag_edit_time = tag_edit_time
         self.createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -83,6 +88,8 @@ def bid_upsert(bid):
         layer_id=bid.layer_id,
         layer_name=bid.layer_name,
         map_id=bid.map_id,
+        longitude=bid.longitude,
+        latitude=bid.latitude,
         tag_create_time=bid.tag_create_time,
         tag_edit_time=bid.tag_edit_time,
         createtime=bid.createtime)
@@ -96,6 +103,8 @@ def bid_upsert(bid):
         layer_id=insert_stmt.inserted.layer_id,
         layer_name=insert_stmt.inserted.layer_name,
         map_id=insert_stmt.inserted.map_id,
+        longitude=insert_stmt.inserted.longitude,
+        latitude=insert_stmt.inserted.latitude,
         tag_create_time=insert_stmt.inserted.tag_create_time,
         tag_edit_time=insert_stmt.inserted.tag_edit_time,
         createtime=insert_stmt.inserted.createtime,
@@ -109,7 +118,7 @@ metadata.create_all(engine)
 
 class LdmapSpider:
     def __init__(self):
-        pass
+        self.mapid = '44026eba-d624-437e-9185-1c6dfd0e1f70'
 
     def run_page(self, pagenumber, pagecount):
         # 构建请求头
@@ -117,9 +126,6 @@ class LdmapSpider:
         headers = {
             'user-agent': ua.Chrome
         }
-
-        # 声明一个列表存储字典
-        data_list = []
 
         url = 'http://www.ldmap.net/service/map/feature/list'
         # 请求url
@@ -130,10 +136,9 @@ class LdmapSpider:
             'state': -1,
             'pagenumber': pagenumber,
             'pagecount': pagecount,
-            'mapid': '44026eba-d624-437e-9185-1c6dfd0e1f70',
+            'mapid': self.mapid,
             '_': int(datetime.now().timestamp())
         }
-        print(param)
 
         try:
             resp = requests.get(url, headers=headers, params=param)
@@ -153,11 +158,43 @@ class LdmapSpider:
                     layer_id = item['layer_id']
                     layer_name = item['layer_name']
                     map_id = item['map_id']
-
+                    longitude, latitude = self.run_detail(feature_id)
+                    print(longitude, latitude )
                     bid = Bid(tag_create_time=tag_create_time, tag_edit_time=tag_edit_time,
                               feature_id=feature_id, feature_name=feature_name, group_id=group_id, group_name=group_name,
-                              layer_id=layer_id, layer_name=layer_name, map_id=map_id)
+                              layer_id=layer_id, layer_name=layer_name, map_id=map_id,
+                              longitude=longitude, latitude=latitude)
                     bid_upsert(bid)
+
+    def run_detail(self, feature_id):
+        # 构建请求头
+        ua = UserAgent()
+        headers = {
+            'user-agent': ua.Chrome
+        }
+
+        url = 'http://www.ldmap.net/service/map/feature/get'
+        # 请求url
+
+        param = {
+            'feature_id': feature_id,
+            'mapid': self.mapid,
+            '_': int(datetime.now().timestamp())
+        }
+
+        try:
+            resp = requests.get(url, headers=headers, params=param)
+        except requests.RequestException as e:
+            logger.error(e)
+        else:
+            print(resp.text)
+            if resp.status_code == 200:
+                result = resp.json()
+                if 'point' in result:
+                    latitude = result['point']['x']
+                    longitude = result['point']['y']
+
+        return longitude, latitude
 
 
 if __name__ == '__main__':
